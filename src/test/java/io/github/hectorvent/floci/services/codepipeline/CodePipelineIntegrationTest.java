@@ -1,8 +1,10 @@
 package io.github.hectorvent.floci.services.codepipeline;
 
+import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.response.Response;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +34,20 @@ import static org.hamcrest.Matchers.nullValue;
 class CodePipelineIntegrationTest {
     private static final String CONTENT_TYPE = "application/x-amz-json-1.1";
     private static final String TARGET = "CodePipeline_20150709.";
+
+    @Inject
+    EmulatorConfig config;
+
+    /**
+     * Blocks until the S3 source poller has had {@code cycles} chances to run. The assertions that
+     * follow these waits are all negative ("no execution was started"), so what matters is that the
+     * poller really did get its turns and declined, not that a fixed number of milliseconds passed.
+     * Deriving the wait from the configured interval keeps that guarantee whatever the interval is
+     * set to.
+     */
+    private void awaitSourcePollCycles(int cycles) throws InterruptedException {
+        Thread.sleep(config.services().codepipeline().sourcePollIntervalMs() * cycles);
+    }
 
     @BeforeAll
     static void configureRestAssured() {
@@ -381,7 +397,7 @@ class CodePipelineIntegrationTest {
                 """))
                 .then().statusCode(200);
 
-        Thread.sleep(1200);
+        awaitSourcePollCycles(5);
         post("ListPipelineExecutions", """
                 {"pipelineName": "%s"}
                 """.formatted(pipelineName))
@@ -410,7 +426,7 @@ class CodePipelineIntegrationTest {
                 .statusCode(200)
                 .body(equalTo("changed artifact"));
 
-        Thread.sleep(1200);
+        awaitSourcePollCycles(5);
         post("ListPipelineExecutions", """
                 {"pipelineName": "%s"}
                 """.formatted(pipelineName))
@@ -467,7 +483,7 @@ class CodePipelineIntegrationTest {
                 """))
                 .then().statusCode(200);
 
-        Thread.sleep(700);
+        awaitSourcePollCycles(3);
         post("ListPipelineExecutions", """
                 {"pipelineName": "%s"}
                 """.formatted(pipelineName))
@@ -538,7 +554,7 @@ class CodePipelineIntegrationTest {
                 .then().statusCode(200);
 
         putObject("codepipeline-poll-disabled-source", "source.zip", "changed artifact");
-        Thread.sleep(1200);
+        awaitSourcePollCycles(5);
 
         post("ListPipelineExecutions", """
                 {"pipelineName": "%s"}

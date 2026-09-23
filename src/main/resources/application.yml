@@ -686,6 +686,7 @@ floci:
       enabled: true
     codepipeline:
       enabled: true
+      source-poll-interval-ms: 500
     autoscaling:
       enabled: true
     applicationautoscaling:

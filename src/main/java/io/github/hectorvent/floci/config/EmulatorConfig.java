@@ -1226,6 +1226,10 @@ public interface EmulatorConfig {
     interface CodePipelineServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /** How often, in milliseconds, S3 sources are polled for a new object revision. */
+        @WithDefault("500")
+        long sourcePollIntervalMs();
     }
 
     interface SsmServiceConfig {

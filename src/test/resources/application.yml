@@ -366,6 +366,7 @@ floci:
       enabled: true
     codepipeline:
       enabled: true
+      source-poll-interval-ms: 100   # a shorter cycle so the "did not trigger" tests wait less
     autoscaling:
       enabled: true
     applicationautoscaling:

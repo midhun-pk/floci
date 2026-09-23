@@ -70,6 +70,7 @@ as `Approved` or `Rejected`, limits `result.summary` to 512 characters, returns
 | `FLOCI_SERVICES_CODEPIPELINE_ENABLED` | `true` | Enables the CodePipeline API |
 | `FLOCI_STORAGE_SERVICES_CODEPIPELINE_MODE` | global mode | Overrides CodePipeline storage mode |
 | `FLOCI_STORAGE_SERVICES_CODEPIPELINE_FLUSH_INTERVAL_MS` | `5000` | Hybrid storage flush interval |
+| `FLOCI_SERVICES_CODEPIPELINE_SOURCE_POLL_INTERVAL_MS` | `500` | How often (ms) S3 sources are polled for a new object revision |
 
 ## Example
 
