@@ -12,7 +12,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -63,19 +66,97 @@ public class SecretsManagerCfnProvisioner implements CfnResourceProvisioner {
         deleteSecretSafe(physicalId, region);
     }
 
+    /**
+     * Create, or on {@code UpdateStack} reconcile in place. {@code Name} is the only create-only
+     * property in the registry schema, so a secret whose name is unchanged (or was generated and
+     * is therefore kept stable) is updated where it stands: description, KMS key and tags are
+     * driven to the template, and an explicit {@code SecretString} that differs from the current
+     * value becomes a new version. A {@code GenerateSecretString} value is not regenerated on
+     * update, which is what keeps a no-op update from rotating the password. A changed explicit
+     * name is a replacement: a new secret is created and the engine removes the displaced one.
+     */
     private void provisionSecret(StackResource r, JsonNode props, ProvisionContext ctx) {
         String region = ctx.region();
-        String name = ctx.resolveOptional(props, "Name");
-        if (name == null || name.isBlank()) {
+        Secret prior = priorSecret(ctx.priorPhysicalId(), region);
+        String explicitName = ctx.resolveOptional(props, "Name");
+        String name;
+        if (explicitName != null && !explicitName.isBlank()) {
+            name = explicitName;
+        } else if (prior != null) {
+            name = prior.getName();
+        } else {
             name = ctx.generatePhysicalName(r.getLogicalId(), 512, false);
         }
         String description = ctx.resolveOptional(props, "Description");
-        String value = resolveSecretValue(props, ctx);
-        Secret secret = secretsManagerService.createSecret(name, value, null, description, null,
-                List.of(), region);
+        String kmsKeyId = ctx.resolveOptional(props, "KmsKeyId");
+        Map<String, String> tags = ctx.resolveTags(props, "Tags");
+
+        Secret secret;
+        if (prior != null && name.equals(prior.getName())) {
+            secret = reconcileExisting(prior, props, description, kmsKeyId, tags, ctx);
+        } else {
+            String value = resolveSecretValue(props, ctx);
+            secret = secretsManagerService.createSecret(name, value, null, description, kmsKeyId,
+                    tagList(tags), region);
+        }
         r.setPhysicalId(secret.getArn());
         r.getAttributes().put("Arn", secret.getArn());
         r.getAttributes().put("Name", name);
+    }
+
+    private Secret priorSecret(String priorPhysicalId, String region) {
+        if (priorPhysicalId == null) {
+            return null;
+        }
+        try {
+            return secretsManagerService.describeSecret(priorPhysicalId, region);
+        } catch (AwsException e) {
+            if (!"ResourceNotFoundException".equals(e.getErrorCode())) {
+                throw e;
+            }
+            LOG.debugv("Prior secret {0} is gone; creating it afresh", priorPhysicalId);
+            return null;
+        }
+    }
+
+    private Secret reconcileExisting(Secret prior, JsonNode props, String description, String kmsKeyId,
+                                     Map<String, String> tags, ProvisionContext ctx) {
+        String region = ctx.region();
+        String arn = prior.getArn();
+        Secret secret = secretsManagerService.updateSecret(arn, description, kmsKeyId, region);
+        String secretString = ctx.resolveOptional(props, "SecretString");
+        if (secretString != null && !secretString.equals(currentValue(arn, region))) {
+            secretsManagerService.putSecretValue(arn, secretString, null, null, region, null);
+        }
+        Map<String, String> current = new LinkedHashMap<>();
+        if (prior.getTags() != null) {
+            for (Secret.Tag tag : prior.getTags()) {
+                current.put(tag.key(), tag.value());
+            }
+        }
+        List<String> stale = ProvisionContext.staleTagKeys(current, tags);
+        if (!stale.isEmpty()) {
+            secretsManagerService.untagResource(arn, stale, region);
+        }
+        if (!tags.isEmpty() && !tags.equals(current)) {
+            secretsManagerService.tagResource(arn, tagList(tags), region);
+        }
+        return secret;
+    }
+
+    private String currentValue(String arn, String region) {
+        try {
+            return secretsManagerService.getSecretValue(arn, null, null, region).getSecretString();
+        } catch (AwsException e) {
+            // A secret with no current version yet has nothing to compare against.
+            return null;
+        }
+    }
+
+    private static List<Secret.Tag> tagList(Map<String, String> tags) {
+        List<Secret.Tag> list = new ArrayList<>();
+        tags.forEach((key, value) -> list.add(new Secret.Tag(key, value)));
+        return list;
     }
 
     private void deleteSecretSafe(String secretId, String region) {
